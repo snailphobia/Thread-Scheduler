@@ -31,21 +31,24 @@ typedef struct _st_que{
 // 1 = running
 // Task: 2 = finished
 typedef struct {
-    int16_t thID;
-    int16_t state;
-    int32_t taskID;
+    int16_t thID; // id thread
+    int8_t state; // flag pentru starea thread
+    int32_t taskID; // id task pe care il ruleaza
+    int8_t usedF; // flag daca a fost folosit deja in ciclul curent
+    struct _Node* tPtr; // pentru task pe care il ruleaza
 } Thread;
 
 typedef struct {
-    int16_t taskID;
-    int16_t state;
-    int16_t thID;
+    int16_t taskID; // id task
+    int16_t state; // flag pentru starea task (deprecated)
+    int16_t thID; // id thread care il ruleaza
     int16_t priority;
-    int32_t TTK;
-    int32_t clk;
+    int32_t TTK; // timpul necesar rularii complete
+    int32_t clk; // timpul in care a fost rulat pana in prezent
 } Task;
 
 #define CLKCheck(N) (((Task*)N)->clk >= ((Task*)N)->TTK)
+// verificare daca timpul curent depaseste timpul necesar
 
 // todo: actual threads
 typedef struct {
@@ -64,7 +67,8 @@ void dequeue(Queue* que, Stack* temp);
 void enqueue(Queue* que, Stack* temp);
 void printQueue(Queue* que, const int8_t qType);
 Node* getTask(Queue* waiting, Queue* running, Queue* finished, int32_t pID);
-Node* getThread(Stack* thPool, Queue* running, uint16_t pID);
+Node* getThread(Stack* thPool, Stack* temp, Queue* running, uint16_t pID);
 void run(volatile int32_t T, const int32_t Q, const int32_t N,
          Stack* thPool, Queue* waiting, Queue* running, Queue* finished, Stack* temp);
+
 #endif

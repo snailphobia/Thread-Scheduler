@@ -73,7 +73,7 @@ Node* getTask(Queue* waiting, Queue* running, Queue* finished, int32_t pID) {
     while (running->size > 0) {
         iter = running->head;
         if (((Task*)iter->data)->taskID == pID) {
-            printf("Task %d is running (remaining_time = %d).\n", pID, ((Task*)iter->data)->TTK);
+            printf("Task %d is running (remaining_time = %d).\n", pID, ((Task*)iter->data)->TTK - ((Task*)iter->data)->clk);
             srcRes = iter;
             flag = 1;
             break;
@@ -106,62 +106,38 @@ Node* getTask(Queue* waiting, Queue* running, Queue* finished, int32_t pID) {
     return srcRes;
 }
 
-// caut in thPool, daca nu apare, atunci caut in running, pentru fiecare task, daca apartine de acel thread
-Node* getThread(Stack* thPool, Queue* running, uint16_t pID) {
-    Stack* temp = createStack();
-    Node* node = NULL;
-
-    temp->head = temp->tail = thPool->head;
-    thPool->head = thPool->head->next;
-    if (((Thread*)temp->head->data)->thID == pID) {
-        // punem la loc pe raft
-        Node* aux = thPool->head;
-        thPool->head = temp->head;
-        temp->head->next = aux;
-        free(temp);
-        printf("Thread %hd is idle.\n", ((Thread*)thPool->head->data)->thID);
-        return thPool->head;
-    }
-    temp->size += 1;
-    thPool->size -= 1;
-
-    Node* val = thPool->head;
-    while (val != NULL && thPool->size >= 0) {
-        Thread* data = val->data;
-        if (data->thID == pID) {
-            node = val;
-            printf("Thread %hd is idle.\n", ((Thread*)thPool->head->data)->thID);
-            break;
-        }
-        Node* aux = temp->head;
-        temp->head = thPool->head;
-        val = thPool->head->next;
-        temp->head->next = aux;
-        // thPool->head = val->next;
-        thPool->head = val;
-        temp->size += 1; thPool->size -= 1;
-    }
-
-    if (thPool->size == 0) {
-        // nu am gasit nimic in pool(a)
-        // cautam acum in running, dupa ce refacem stiva
-        val = temp->head;
-        while (val != NULL) {
-            Node* aux = thPool->head;
-            thPool->head = temp->head;
-            thPool->head->next = aux;
-            temp->head = temp->head->next;
-            val = temp->head;
-            temp->size -= 1; thPool->size += 1;
-        }
+// caut in thPool, daca nu apare, atunci caut in temp, pentru fiecare thread
+// am chiar tupeul pervers sa cred ca stivele sunt bine facute si nu lipseste nimic
+Node* getThread(Stack* thPool, Stack* temp, Queue* running, uint16_t pID) {
+    Stack* exchange = createStack();
+    extern void moveStoS();
+    while (thPool->head) {
+        moveStoS(exchange, thPool);
+        Thread* thIt = exchange->head->data;
+        if (thIt->thID == pID)
+            printf("Thread %d is idle.\n", pID);
     }
     
-    return node;
+    while (exchange->head)
+        moveStoS(thPool, exchange);
+
+    while (temp->head) {
+        moveStoS(exchange, temp);
+        Thread* thIt = exchange->head->data;
+        if (thIt->thID == pID)
+            printf("Thread %d is running task %d (remaining_time = %d).\n", pID, ((Task*)thIt->tPtr->data)->taskID, ((Task*)thIt->tPtr->data)->TTK - ((Task*)thIt->tPtr->data)->clk);
+    }
+    
+    while (exchange->head)
+        moveStoS(thPool, exchange);
+
+    return NULL;
 }
 
 // atribuirea informatiei pe alta data, acum doar alocarea
 void addNodeInOrder(void* dest, Node* node) {
     // todo inlocuire bucati de mutare noduri cu enqueue/dequeue
+    // edit: yeah I don't think I will
     Queue* que = dest;
     Stack* aux = createStack();
 
@@ -204,7 +180,7 @@ void addNodeInOrder(void* dest, Node* node) {
         aux->head = node;
     }
     int32_t counter = 0;
-    for (Node* top = aux->head; top != NULL && counter < que->size; ) {
+    for (Node* top = aux->head; top != NULL && counter < que->size; counter++) {
         Node* followUp = top->next;
         if (que->head == NULL) {
             que->head = que->tail = top;
@@ -215,7 +191,7 @@ void addNodeInOrder(void* dest, Node* node) {
             que->head = top;
         }
         top = followUp;
-        counter++;
+        
     }
     free(aux);
     return;
@@ -321,9 +297,12 @@ void parser(const int32_t Q, const int32_t N) {
         ((Thread*)node->data)->state = 0;
         ((Thread*)node->data)->taskID = -1;
         ((Thread*)node->data)->thID = i;
+        ((Thread*)node->data)->usedF = 0;
+        ((Thread*)node->data)->tPtr = NULL;
     }
 
     char* cmd = calloc(S1, sizeof(char));
+    Stack* temp = createStack();
     while (scanf("%s", cmd) > 0) {
         if (!strcmp(cmd, "add_tasks")) {
             extern int32_t taskN;
@@ -355,7 +334,7 @@ void parser(const int32_t Q, const int32_t N) {
             if (pID >= N)
                 printf("Thread %d not found.\n", pID);
             else {
-                Node* srcRes = getThread(thPool, running, pID);
+                Node* srcRes = getThread(thPool, temp, running, pID);
             }
         }
         if (!strcmp(cmd, "print")) {
@@ -370,89 +349,200 @@ void parser(const int32_t Q, const int32_t N) {
         if (!strcmp(cmd, "run")) {
             int32_t vT = 0;
             int8_t sign = scanf("%d", &vT);
-            Stack* temp = createStack();
-            run(vT, Q, N, thPool, waiting, running, finished, temp);
+            printf("Running tasks for %d ms...\n", vT);
+            extern void run2();
+            run2(vT, Q, N, thPool, waiting, running, finished, temp);
         }
     }
 
     return;
 }
 
+void orderQueue(Queue* que) {
+    Stack* exchange = createStack();
+    Stack* firstH = createStack();
+    Stack* secondH = createStack();
+    extern void moveStoS();
+    printf("%d\n", que->size);
+    while (que->head)
+        dequeue(que, exchange);
+
+    printf("%d\n", exchange->size);
+
+    fflush(stdout);
+    while (exchange->head) {
+        Node* aux = exchange->head;
+        Node* cp = aux->next;
+
+        enqueue(que, exchange);
+
+        //exchange->head = cp;
+    }
+    printf("%d\n", que->size);
+    free(exchange);
+}
+
 // fiecare iteratie a functiei va acoperi bucata de timp ceruta
 // va trebui mai folosesc o stiva pentru a pune threadurile folosite
 // nu e nevoie sa o initializam din functia parser pentru ca la finalul
 // unei iteratii, toate threadurile ajung din nou in pool
-void run(volatile int32_t T, const int32_t Q, const int32_t N,
-         Stack* thPool, Queue* waiting, Queue* running, Queue* finished, Stack* temp) {
 
-    Stack* tempQ = createStack();
-    Stack* tempQ2 = createStack();
-    if (waiting->size == 0 && running->size == 0) {
-        free(temp);
-        return;
-    }
+// void run(volatile int32_t T, const int32_t Q, const int32_t N,
+//          Stack* thPool, Queue* waiting, Queue* running, Queue* finished, Stack* temp) {
+
+//     Stack* tempQ = createStack();
+//     Stack* tempQ2 = createStack();
+//     Stack* swapSt = createStack();
+//     Stack* usedEnded = createStack();
+
+//     if (waiting->size == 0 && running->size == 0) {
+//         free(temp);
+//         free(tempQ);
+//         free(swapSt);
+//         free(usedEnded);
+//         return;
+//     }
     
-    // aici incepem daca mai avem query-uri
-    Node* nodeTh = thPool->head, * nodeTask = waiting->head;
-    //printf("%d\n", T);
-    while (thPool->head && waiting->head) {
-        //printf("in loop: thread %p task %p\n", thPool->head, waiting->head);
-        if (temp->head == NULL) {
-            temp->head = temp->tail = nodeTh;
-            thPool->head = thPool->head->next;
-            temp->size += 1;
-            thPool->size -= 1;
-        } else {
-            Node* aux = temp->head;
-            temp->head = thPool->head;
-            nodeTh = thPool->head->next;
-            temp->head->next = aux;
-            thPool->head = nodeTh;
-            temp->size += 1;
-            thPool->size -= 1;
-        }
+//     // aici incepem daca mai avem query-uri
+//     Node* nodeTh = thPool->head, * nodeTask = waiting->head;
+//     //printf("%d\n", T);
+//     int16_t swapped = 0;
+//     Stack* ranToF = createStack();
+//     while (running->head && running->size) {
+//         dequeue(running, ranToF);
+//         // printf("%d %d\n", running->size, ranToF->size);
+//         fflush(stdout);
+//         Node* nd = ranToF->head;
+//         ((Task*)nd->data)->clk += T * (T <= Q) + Q * (T > Q);
+//         // daca vreununul dintre taskuri care se afla deja in running s-a terminat
+//         // mutam threadul inapoi in pool
+//         if CLKCheck(nd->data) {
+//             swapped++;
+//             // printf("sclavie incheiata cu succes la task id %d\n", ((Task*)nd->data)->taskID);
+//             Node* auxSw = nd->next;
+//             // printf("in clkcheck . . . %p -> %p\n", nd, auxSw);
+//             ((Task*)nd->data)->tPtr->next = usedEnded->head;
+//             usedEnded->head = ((Task*)nd->data)->tPtr;
+//             ((Thread*)usedEnded->head->data)->tPtr = NULL;
+//             ((Thread*)usedEnded->head->data)->taskID = 0;
+//             ((Thread*)usedEnded->head->data)->usedF = 0;
+//             enqueue(finished, ranToF);
+//             // printf("  %d\n", finished->size);
+//         }
+//     }
+//     // printf("size of rantof is %d | start is at %p\n", ranToF->size, ranToF->head);
+//     while (ranToF->head) {
+//         enqueue(running, ranToF);
+//         // printf("%d %d\n", running->size, ranToF->size);
+//         fflush(stdout);
+//     }
+//     while (thPool->head && waiting->head) {
+//         //printf("in loop: thread %p task %p\n", thPool->head, waiting->head);
+//         if (temp->head == NULL) {
+//             temp->head = temp->tail = nodeTh;
+//             thPool->head = thPool->head->next;
+//             temp->size += 1;
+//             thPool->size -= 1;
+//         } else {
+//             Node* aux = temp->head;
+//             temp->head = thPool->head;
+//             nodeTh = thPool->head->next;
+//             temp->head->next = aux;
+//             thPool->head = nodeTh;
+//             temp->size += 1;
+//             thPool->size -= 1;
+//         }
 
-        // mutam obiectul nodeTask din waiting in running
-        // why are you running?
+//         // mutam obiectul nodeTask din waiting in running
+//         // why are you running?
         
-        dequeue(waiting, tempQ);
-        enqueue(running, tempQ);
-        Node* ranTask = running->tail;
-        // setam valorile de mediu pentru thread
-        ((Thread*)temp->head->data)->state = 1; // running
-        ((Thread*)temp->head->data)->taskID = ((Task*)ranTask->data)->taskID;
+//         dequeue(waiting, tempQ);
+//         enqueue(running, tempQ);
+//         Node* ranTask = running->head;
+//         // mai trebuiesc si ordonate nodurile din cozi la final
 
-        // setam valorile de mediu pentru task
-        // (sunt cam multe, brace yourself)
-        Task* value = ranTask->data;
-        value->clk += Q * (Q <= T) + T * (Q > T);
-        value->state = 1; // running
-        value->thID = ((Thread*)temp->head->data)->thID;
+//         // setam valorile de mediu pentru thread
+//         ((Thread*)temp->head->data)->state = 1; // running
+//         ((Thread*)temp->head->data)->taskID = ((Task*)ranTask->data)->taskID;
+//         ((Thread*)temp->head->data)->tPtr = ranTask;
 
-        // aici s-a terminat partea de pus sclavii la munca
-        // acum verificam sclavii deja assignati daca si-au terminat treaba
-        // daca da, le luam treaba terminata si o punem in finished
-        // si le dam alte treburi
+//         // setam valorile de mediu pentru task
+//         // (sunt cam multe, brace yourself)
+//         Task* value = ranTask->data;
+//         value->clk += Q * (Q <= T) + T * (Q > T);
+//         value->state = 1; // running
+//         value->thID = ((Thread*)temp->head->data)->thID;
+//         value->tPtr = temp->head;
+//         // aici s-a terminat partea de pus sclavii la munca
+//         // acum verificam sclavii deja assignati daca si-au terminat treaba
+//         // daca da, le luam treaba terminata si o punem in finished
+//         // si le dam alte treburi
 
-        if CLKCheck(ranTask->data) {
-            printf("sclavie incheiata cu succes la taskID %d\n", ((Task*)ranTask->data)->taskID);
-            dequeue(running, tempQ2);
-            enqueue(finished, tempQ2);
-        
-            // nodeTh = temp->head;
-            // ((Thread*)nodeTh->data)->state = 0; // terminated
-            // ((Thread*)nodeTh->data)->taskID = 0; // terminated
-            // Node* aux = thPool->head;
-            // thPool->head = temp->head;
-            // thPool->head->next = aux;
-            // temp->head = temp->head->next;
-            // nodeTh = temp->head;
-            // temp->size -= 1; thPool->size += 1;
-        }
-    }
+//         if CLKCheck(ranTask->data) {
+//             // printf("sclavie incheiata cu succes la taskID %d\n", ((Task*)ranTask->data)->taskID);
+//             fflush(stdout);
+//             dequeue(running, tempQ2);
+//             enqueue(finished, tempQ2);
+//             Node* freedTh = ((Task*)ranTask->data)->tPtr;
+
+//             while (temp->head) {
+//                 if (((Thread*)temp->head->data)->thID == ((Task*)ranTask->data)->thID)
+//                     break;
+//                 Node* aux = temp->head->next;
+//                 temp->head->next = swapSt->head;
+//                 swapSt->head = temp->head;
+//                 temp->head = aux;
+//             }
+//             // am gasit threadul terminat
+//             swapped++;
+
+//             Node* aux = temp->head->next;
+//             temp->head->next = usedEnded->head;
+//             usedEnded->head = temp->head;
+//             temp->head = aux;
+//             usedEnded->size += 1;
+//             ((Thread*)usedEnded->head->data)->usedF = 1;
+//             // il punem inapoi in pool
+
+//             while (swapSt->head) {
+//                 aux = swapSt->head->next;
+//                 swapSt->head->next = temp->head;
+//                 temp->head = swapSt->head;
+//                 swapSt->head = aux;
+//             }
+//             // nodeTh = temp->head;
+//             // ((Thread*)nodeTh->data)->state = 0; // terminated
+//             // ((Thread*)nodeTh->data)->taskID = 0; // terminated
+//             // Node* aux = thPool->head;
+//             // thPool->head = temp->head;
+//             // thPool->head->next = aux;
+//             // temp->head = temp->head->next;
+//             // nodeTh = temp->head;
+//             // temp->size -= 1; thPool->size += 1;
+//         }
+//     }
     
-    if (T >= Q)
-        run(T - Q, Q, N, thPool, waiting, running, finished, temp);
-    // hehe
-    while (0);
-}
+//     while(swapped) {
+//         // printf("%d : %p -> %p\n", swapped, usedEnded->head, usedEnded->head->next);
+//         fflush(stdout);
+//         if (usedEnded->head) {
+//             Node* aux = usedEnded->head->next;
+//             usedEnded->head->next = thPool->head;
+//             thPool->head = usedEnded->head;
+//             usedEnded->head = aux;
+//             usedEnded->size -= 1;
+//             thPool->size += 1;
+//             ((Thread*)thPool->head->data)->usedF = 0;
+//             ((Thread*)thPool->head->data)->tPtr = NULL;
+//             swapped--;
+//         }
+//         // il punem inapoi in pool
+//     }
+//     free(usedEnded);
+//     fflush(stdout);
+
+//     if (T >= Q)
+//         run(T - Q, Q, N, thPool, waiting, running, finished, temp);
+//     // hehe
+//     return;
+// }

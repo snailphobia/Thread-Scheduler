@@ -2,6 +2,90 @@
 
 void moveStoS(Stack* st1, Stack* st2);
 
+// src este mask pentru Stack* / Queue*
+// ne intereseaza doar primul element
+Node* moveInOrder(Queue* que, void* src) {
+    Stack* ptr = src;
+    Stack* exchange = createStack();
+    Node* retVal = ptr->head;
+    if (ptr->head == NULL) {
+        printf("Warn: %p (src) is empty, can not retrieve node\n", ptr);
+        free(exchange);
+        return NULL;
+    }
+
+    if (que->head == NULL) {
+        free(exchange);
+        Node* aux = ptr->head->next;
+        que->head = que->tail = ptr->head;
+        ptr->head = aux;
+        que->size = 1; ptr->size -= 1;
+        que->head->next = NULL; que->tail->next = NULL;
+        return retVal;
+    }
+    
+    //verificam sa fie / nu fie primul element
+    if (compareQueueNodes(que->head, ptr->head) >= 1) {
+        Node* aux = ptr->head->next;
+        ptr->head->next = que->head;
+        que->head = ptr->head;
+        ptr->head = aux;
+        
+        que->size += 1;
+        ptr->size -= 1;
+        free(exchange);
+        return retVal;
+    }
+
+    while (que->size) {
+        Node* aux = que->head, * nAux = que->head->next;
+        
+        if (compareQueueNodes(que->head, ptr->head) >= 1) {
+            Node* nPtr = ptr->head->next;
+            ptr->head->next = exchange->head;
+            exchange->head = ptr->head;
+            ptr->head = nPtr;
+            ptr->size -= 1; exchange->size += 1;
+            break;
+        }
+
+        que->head->next = exchange->head;
+        exchange->head = que->head;
+        que->head = nAux;
+        exchange->size += 1; que->size -= 1;
+    }
+
+    // daca suntem la finalul cozii inseamna ca trebuie pus ultimul nodul dat
+    if (que->size == 0) {
+        Node* auxH = ptr->head->next;
+        ptr->head->next = NULL;
+        que->head = que->tail = ptr->head;
+        ptr->head = auxH;
+        que->size = 1; ptr->size -= 1;
+    }
+
+    while (exchange->head) {
+        Node* hd = exchange->head->next;
+        exchange->head->next = que->head;
+        
+        // made a severe lapse in judgement
+        if (que->head == NULL) {
+            que->head = que->tail = exchange->head; 
+        }
+        else
+            que->head = exchange->head;
+        exchange->head = hd;
+
+        exchange->size -= 1; que->size += 1;
+    }
+
+    if (exchange->size != 0)
+        printf ("Warn (in moveInOrder/testbed.c): exchange stack not empty at exit\n");
+
+    free(exchange);
+    return retVal;
+}
+
 // move q tail to s head
 void moveQtoS(Queue* que, Stack* st) {
     Node* N = NULL, * aux = NULL;
@@ -43,11 +127,19 @@ void moveQtoS(Queue* que, Stack* st) {
 // move s head to q tail
 void moveStoQ(Queue* que, Stack* st) {
     Node* N = NULL, * aux = NULL;
+    
     if (st->head)
         N = st->head, aux = st->head->next;
     else
         return;
 
+    if (que->head == NULL) {
+        st->head->next = NULL;
+        que->head = que->tail = st->head;
+        st->head = aux;
+        st->size -= 1; que->size += 1;
+        return;
+    }
     que->tail->next = N;
     que->tail = N;
     N->next = NULL;
@@ -125,7 +217,7 @@ Node* findNodeInQ(Queue* que, Stack* exchange, int32_t tID, int8_t* headFlag) {
     
     if (((Task*)N->data)->taskID == tID) {
         *headFlag = 1;
-        return NULL;
+        return N;
     }
     
     while (N) {
@@ -142,20 +234,21 @@ Node* findNodeInQ(Queue* que, Stack* exchange, int32_t tID, int8_t* headFlag) {
 }
 
 void run2(volatile int32_t T, const int32_t Q, const int32_t N,
-         Stack* thPool, Queue* waiting, Queue* running, Queue* finished, Stack* temp) {
+         Stack* thPool, Queue* waiting, Queue* running, Queue* finished, Stack* temp, int8_t* final) {
     Stack* exchangeSR = createStack();
     Stack* exchangeSW = createStack();
     Stack* finishedTh = createStack();
     Stack* exchangeQ = createStack();
+    Stack* SRMLE = createStack();
+    fflush(stdout);
 
-    //printf("%d | %d\n", temp->size, running->size);
-    //printf("waiting size: %d\n", waiting->size);
     while (thPool->head) {
         moveStoS(exchangeSW, thPool);
         Node* node = exchangeSW->head;
         if (waiting->size) {
-            headsMoveQtoQ(running, waiting);
-            ((Thread*)node->data)->tPtr = running->head;
+            Node* slaved = moveInOrder(running, waiting);
+
+            ((Thread*)node->data)->tPtr = slaved;
             ((Thread*)node->data)->taskID = ((Task*)((Thread*)node->data)->tPtr->data)->taskID;
             ((Thread*)node->data)->state = 1;
             ((Task*)((Thread*)node->data)->tPtr->data)->thID = ((Thread*)node->data)->thID;
@@ -163,37 +256,32 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
             moveStoS(temp, exchangeSW);
         }
     }
-
-    //printf("%d | %d\n", temp->size, running->size);
+    
     while (exchangeSW->size)
         moveStoS(thPool, exchangeSW);
-    
-    //printf("%d | %d | %d | %d\n", exchangeSR->size, temp->size, thPool->size, running->size);
+
     while (temp->head) {
         moveStoS(exchangeSR, temp);
-        
+
         Node* node = exchangeSR->head;
         Node* assocTask = ((Thread*)node->data)->tPtr;
         ((Task*)assocTask->data)->clk += T * (T <= Q) + Q * (T > Q);
-        
+    }
+
+    while (exchangeSR->head) {
+        Node* node = exchangeSR->head;
+        Node* auxH = node->next;
+        Node* assocTask = ((Thread*)node->data)->tPtr;
         if CLKCheck(assocTask->data) {
             int8_t headFlag = 0;
             findNodeInQ(running, exchangeQ, ((Task*)assocTask->data)->taskID, &headFlag);
-            // printf ("found node %d\n", ((Task*)running->head->data)->taskID);
-            // printf ("in exchange: %p -> %d\n", exchangeQ->head, exchangeQ->size);
-            
-            headsMoveQtoQ(finished, running);
-            
-            Node* finTask = finished->head;
+            moveStoQ(finished, running);
+            Node* finTask = finished->tail;
             ((Task*)finTask->data)->state = 0;
             ((Task*)finTask->data)->thID = 0;
-            
             // if (!headFlag)
-                while (exchangeQ->head)
-                    moveStoS((Stack*)running, exchangeQ);
-
-            // printf ("in exchange: %p -> %d\n", exchangeQ->head, exchangeQ->size);
-
+            while (exchangeQ->head)
+                moveInOrder(running, exchangeQ);
             ((Thread*)node->data)->tPtr = NULL;
             ((Thread*)node->data)->state = 0;
             ((Thread*)node->data)->usedF = 1;
@@ -201,11 +289,16 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
             
             moveStoS(finishedTh, exchangeSR);
         }
+        else
+            moveStoS(SRMLE, exchangeSR);
+        // exchangeSR->head = auxH;
     }
-    //printf("%d | %d | %d | %d\n", exchangeSR->size, temp->size, thPool->size, running->size);
+
+    while(SRMLE->head)
+        moveStoS(exchangeSR, SRMLE);
+
     while (exchangeSR->size)
         moveStoS(temp, exchangeSR);
-    //printf("%d | %d | %d | %d\n", exchangeSR->size, temp->size, thPool->size, running->size);
     
     while (finishedTh->size) {
         moveStoS(thPool, finishedTh);
@@ -213,8 +306,8 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
         moveStoS(exchangeSW, thPool);
         Node* node = exchangeSW->head;
         if (waiting->size) {
-            headsMoveQtoQ(running, waiting);
-            ((Thread*)node->data)->tPtr = running->head;
+            Node* slaved = moveInOrder(running, waiting);
+            ((Thread*)node->data)->tPtr = slaved;
             ((Thread*)node->data)->taskID = ((Task*)((Thread*)node->data)->tPtr->data)->taskID;
             ((Thread*)node->data)->state = 1;
             ((Task*)((Thread*)node->data)->tPtr->data)->thID = ((Thread*)node->data)->thID;
@@ -225,7 +318,12 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
 
     while (exchangeSW->size)
         moveStoS(thPool, exchangeSW);
-    //printf("%d | %d | %d | %d\n", exchangeSR->size, temp->size, thPool->size, running->size);
+
     if (T >= Q)
-        run2(T - Q, Q, N, thPool, waiting, running, finished, temp);
+        run2(T - Q, Q, N, thPool, waiting, running, finished, temp, final);
+    // if (*final == 0) {
+    //     *final = 1;
+    //     run2(0, Q, N, thPool, waiting, running, finished, temp, final);
+    // }
+    return;
 }

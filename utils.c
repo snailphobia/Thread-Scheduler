@@ -14,6 +14,8 @@ Stack* createStack() {
     return st;
 }
 
+extern void moveInOrder();
+
 // mutam primul nod din coada in stiva temporara
 void dequeue(Queue* que, Stack* temp) {
     if (que->head == NULL)
@@ -129,7 +131,7 @@ Node* getThread(Stack* thPool, Stack* temp, Queue* running, uint16_t pID) {
     }
     
     while (exchange->head)
-        moveStoS(thPool, exchange);
+        moveStoS(temp, exchange);
 
     return NULL;
 }
@@ -274,7 +276,7 @@ int8_t compareQueueNodes(Node* A, Node* B) {
         return -1;
     if (AT->priority < BT->priority)
         return 1;
-    if (AT->TTK > BT->TTK)
+    if (AT->TTK - AT->clk > BT->TTK - BT->clk)
         return 1;
     if (AT->TTK < BT->TTK)
         return -1;
@@ -348,10 +350,10 @@ void parser(const int32_t Q, const int32_t N) {
         }
         if (!strcmp(cmd, "run")) {
             int32_t vT = 0;
-            int8_t sign = scanf("%d", &vT);
+            int8_t sign = scanf("%d", &vT), final = 0;
             printf("Running tasks for %d ms...\n", vT);
             extern void run2();
-            run2(vT, Q, N, thPool, waiting, running, finished, temp);
+            run2(vT, Q, N, thPool, waiting, running, finished, temp, &final);
         }
     }
 

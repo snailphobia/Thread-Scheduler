@@ -26,6 +26,13 @@ typedef struct _st_que{
     Node* head, * tail;
 } Stack, Queue;
 
+// todo: actual threads
+typedef struct {
+    // https://imgur.com/Tz9IKSJ
+    pthread_t* tID;
+    clock_t clk;
+} ElementPThread;
+
 // states:
 // 0 = waiting
 // 1 = running
@@ -36,6 +43,7 @@ typedef struct {
     int32_t taskID; // id task pe care il ruleaza
     int8_t usedF; // flag daca a fost folosit deja in ciclul curent
     struct _Node* tPtr; // pentru task pe care il ruleaza
+    // ElementPThread tiedThread; // todo
 } Thread;
 
 typedef struct {
@@ -49,13 +57,8 @@ typedef struct {
 
 #define CLKCheck(N) (((Task*)N)->clk >= ((Task*)N)->TTK)
 // verificare daca timpul curent depaseste timpul necesar
-
-// todo: actual threads
-typedef struct {
-    // https://imgur.com/Tz9IKSJ
-    pthread_t* tID;
-    clock_t clk;
-} ElementPThread;
+#define FCLKCheck(N, Q)  (((Task*)N)->TTK - ((Task*)N)->clk >= Q)
+// verificare daca mai avem rulari de cuanta Q dupa cea curenta
 
 Queue* createQueue();
 Stack* createStack();

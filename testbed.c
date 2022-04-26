@@ -80,13 +80,14 @@ Node* moveInOrder(Queue* que, void* src) {
     }
 
     if (exchange->size != 0)
-        printf ("Warn (in moveInOrder/testbed.c): exchange stack not empty at exit\n");
+        printf ("Warn (in moveInOrder/testbed.c):"
+                " exchange stack not empty at exit\n");
 
     free(exchange);
     return retVal;
 }
 
-// move q tail to s head
+// muta q tail in s head
 void moveQtoS(Queue* que, Stack* st) {
     Node* N = NULL, * aux = NULL;
     if (que->head)
@@ -124,7 +125,7 @@ void moveQtoS(Queue* que, Stack* st) {
     return;
 }
 
-// move s head to q tail
+// muta s head in que tail
 void moveStoQ(Queue* que, Stack* st) {
     Node* N = NULL, * aux = NULL;
     
@@ -140,16 +141,16 @@ void moveStoQ(Queue* que, Stack* st) {
         st->size -= 1; que->size += 1;
         return;
     }
+    N->next = NULL;
     que->tail->next = N;
     que->tail = N;
-    N->next = NULL;
     st->head = aux;
     st->size -= 1;
     que->size += 1;
     return;
 }
 
-// move s2 head to s1 head
+// muta s2 head in s1 head
 void moveStoS(Stack* st1, Stack* st2) {
     Node* N = NULL, * aux = NULL;
     if (st2->head)
@@ -165,7 +166,7 @@ void moveStoS(Stack* st1, Stack* st2) {
     return;
 }
 
-// move q2 head to q1 head
+// muta q2 head in q1 head
 void headsMoveQtoQ(Queue* que1, Queue* que2) {
     Stack* exchange = createStack();
     dequeue(que2, exchange);
@@ -174,7 +175,7 @@ void headsMoveQtoQ(Queue* que1, Queue* que2) {
     return;
 }
 
-// move q2 tail to q1 head
+// muta tail q2 in q1 head
 void moveQtoQ(Queue* que1, Queue* que2) {
     Node* N = NULL, * aux = NULL;
     if (que2->head)
@@ -233,15 +234,19 @@ Node* findNodeInQ(Queue* que, Stack* exchange, int32_t tID, int8_t* headFlag) {
     return NULL;
 }
 
-void run2(volatile int32_t T, const int32_t Q, const int32_t N,
-         Stack* thPool, Queue* waiting, Queue* running, Queue* finished, Stack* temp, int8_t* final) {
+int32_t run2(volatile int32_t T, const int32_t Q, 
+          const int32_t N, Stack* thPool, Queue* waiting, Queue* running,
+          Queue* finished, Stack* temp, int8_t* final, int8_t* idPool) {
+    
+    *final = 0;
+    int32_t tSum = 0, maxT = 0;
     Stack* exchangeSR = createStack();
     Stack* exchangeSW = createStack();
     Stack* finishedTh = createStack();
     Stack* exchangeQ = createStack();
     Stack* SRMLE = createStack();
     fflush(stdout);
-
+    // pune toti sclavii disponibili la munca, daca mai au ce face
     while (thPool->head) {
         moveStoS(exchangeSW, thPool);
         Node* node = exchangeSW->head;
@@ -249,9 +254,11 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
             Node* slaved = moveInOrder(running, waiting);
 
             ((Thread*)node->data)->tPtr = slaved;
-            ((Thread*)node->data)->taskID = ((Task*)((Thread*)node->data)->tPtr->data)->taskID;
+            ((Thread*)node->data)->taskID =
+             ((Task*)((Thread*)node->data)->tPtr->data)->taskID;
             ((Thread*)node->data)->state = 1;
-            ((Task*)((Thread*)node->data)->tPtr->data)->thID = ((Thread*)node->data)->thID;
+            ((Task*)((Thread*)node->data)->tPtr->data)->thID =
+             ((Thread*)node->data)->thID;
 
             moveStoS(temp, exchangeSW);
         }
@@ -260,23 +267,46 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
     while (exchangeSW->size)
         moveStoS(thPool, exchangeSW);
 
+    // aici muncesc efectiv sclavii
     while (temp->head) {
         moveStoS(exchangeSR, temp);
 
         Node* node = exchangeSR->head;
         Node* assocTask = ((Thread*)node->data)->tPtr;
+        
         ((Task*)assocTask->data)->clk += T * (T <= Q) + Q * (T > Q);
-    }
+        if (!CLKCheck(assocTask->data))
+            maxT = Q;
+        else {
+            if (maxT < ((Task*)assocTask->data)->TTK 
+            - (((Task*)assocTask->data)->clk - (T * (T <= Q) + Q * (T > Q))))
+                maxT = ((Task*)assocTask->data)->TTK
+                 - (((Task*)assocTask->data)->clk 
+                 - (T * (T <= Q) + Q * (T > Q)));
+        }
+        if FCLKCheck(assocTask->data, Q)
+            *final = 1;
+        tSum += (((Task*)assocTask->data)->TTK
+                - ((Task*)assocTask->data)->clk > 0);
+    }   
 
+    // ce e terminat se duce in finished, ce nu, ramane acolo
     while (exchangeSR->head) {
         Node* node = exchangeSR->head;
         Node* auxH = node->next;
         Node* assocTask = ((Thread*)node->data)->tPtr;
         if CLKCheck(assocTask->data) {
+            if (maxT < ((Task*)assocTask->data)->TTK
+             - (((Task*)assocTask->data)->clk - (T * (T <= Q) + Q * (T > Q))))
+                maxT = ((Task*)assocTask->data)->TTK
+                 - (((Task*)assocTask->data)->clk
+                  - (T * (T <= Q) + Q * (T > Q)));
             int8_t headFlag = 0;
-            findNodeInQ(running, exchangeQ, ((Task*)assocTask->data)->taskID, &headFlag);
+            findNodeInQ(running, exchangeQ,
+             ((Task*)assocTask->data)->taskID, &headFlag);
             moveStoQ(finished, running);
             Node* finTask = finished->tail;
+            idPool[((Task*)finTask->data)->taskID] = 0;
             ((Task*)finTask->data)->state = 0;
             ((Task*)finTask->data)->thID = 0;
             // if (!headFlag)
@@ -294,12 +324,14 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
         // exchangeSR->head = auxH;
     }
 
+    // SARMALE
     while(SRMLE->head)
         moveStoS(exchangeSR, SRMLE);
 
     while (exchangeSR->size)
         moveStoS(temp, exchangeSR);
     
+    // repunem sclavii la munca daca au terminat
     while (finishedTh->size) {
         moveStoS(thPool, finishedTh);
         ((Thread*)thPool->head->data)->usedF = 0;
@@ -308,9 +340,11 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
         if (waiting->size) {
             Node* slaved = moveInOrder(running, waiting);
             ((Thread*)node->data)->tPtr = slaved;
-            ((Thread*)node->data)->taskID = ((Task*)((Thread*)node->data)->tPtr->data)->taskID;
+            ((Thread*)node->data)->taskID =
+             ((Task*)((Thread*)node->data)->tPtr->data)->taskID;
             ((Thread*)node->data)->state = 1;
-            ((Task*)((Thread*)node->data)->tPtr->data)->thID = ((Thread*)node->data)->thID;
+            ((Task*)((Thread*)node->data)->tPtr->data)->thID
+             = ((Thread*)node->data)->thID;
 
             moveStoS(temp, exchangeSW);
         }
@@ -319,11 +353,17 @@ void run2(volatile int32_t T, const int32_t Q, const int32_t N,
     while (exchangeSW->size)
         moveStoS(thPool, exchangeSW);
 
-    if (T >= Q)
-        run2(T - Q, Q, N, thPool, waiting, running, finished, temp, final);
-    // if (*final == 0) {
-    //     *final = 1;
-    //     run2(0, Q, N, thPool, waiting, running, finished, temp, final);
-    // }
-    return;
+    if (tSum >= N)
+        *final = 1;
+    free(SRMLE);
+    free(exchangeQ);
+    free(exchangeSR);
+    free(exchangeSW);
+    free(finishedTh);
+    // if (T >= Q)
+    //    run2(T - Q, Q, N, thPool, waiting, running, finished, temp, final, idPool);
+    //  stack overflow gaming
+    
+    return maxT;
+    // timpul maxim ramas de executie
 }

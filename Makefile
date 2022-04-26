@@ -6,7 +6,7 @@ LDFLAGS = -lpthread
 all: build
 
 build:
-	$(CC) $(CFLAGS) -o main $(SRCS) $(LDFLAGS)
+	$(CC) $(CFLAGS) -o tema2 $(SRCS) $(LDFLAGS)
 
 clean:
-	rm -f *.o main
+	rm -f *.o tema2
